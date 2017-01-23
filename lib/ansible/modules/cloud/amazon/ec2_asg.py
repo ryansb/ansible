@@ -765,6 +765,7 @@ def delete_autoscaling_group(connection, module):
         )
     describe_response = connection.describe_auto_scaling_groups(AutoScalingGroupNames=[group_name])
     groups = describe_response.get('AutoScalingGroups')
+
     if groups:
         connection.update_auto_scaling_group(AutoScalingGroupName=group_name, MinSize=0, MaxSize=0, DesiredCapacity=0)
         instances = True
@@ -780,11 +781,9 @@ def delete_autoscaling_group(connection, module):
         connection.delete_auto_scaling_group(AutoScalingGroupName=group_name)
         while len(connection.describe_auto_scaling_groups(AutoScalingGroupNames=[group_name]).get('AutoScalingGroups')):
             time.sleep(5)
-        changed=True
-        return changed
-    else:
-        changed=False
-        return changed
+        return True
+
+    return False
 
 def get_chunks(l, n):
     for i in xrange(0, len(l), n):

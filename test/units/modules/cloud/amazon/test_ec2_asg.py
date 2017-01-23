@@ -43,6 +43,67 @@ def basic_launch_config():
         else:
             raise
 
+@pytest.fixture(scope='module')
+def scratch_vpc():
+    if not os.getenv('PLACEBO_RECORD'):
+        yield {
+            'vpc_id': 'vpc-123456',
+            'cidr_range': '10.0.0.0/16',
+            'subnets': [
+                {
+                    'id': 'subnet-123456',
+                    'az': 'us-east-1d',
+                },
+                {
+                    'id': 'subnet-654321',
+                    'az': 'us-east-1e',
+                },
+            ]
+        }
+        return
+
+    # use a *non recording* session to make the base VPC and subnets
+    # since that's a prereq of the ec2_asg module, and isn't what
+    # we're testing.
+    ec2 = boto3.client('ec2')
+    vpc_resp = ec2.create_vpc(
+        CidrBlock='10.0.0.0/16',
+        AmazonProvidedIpv6CidrBlock=False,
+    )
+    subnets = (
+        ec2.create_subnet(
+            VpcId=vpc_resp['Vpc']['VpcId'],
+            CidrBlock='10.0.0.0/24',
+        ),
+        ec2.create_subnet(
+            VpcId=vpc_resp['Vpc']['VpcId'],
+            CidrBlock='10.0.1.0/24',
+        )
+    )
+    import time
+    time.sleep(3)
+
+    yield {
+        'vpc_id': vpc_resp['Vpc']['VpcId'],
+        'cidr_range': '10.0.0.0/16',
+        'subnets': [
+            {
+                'id': s['Subnet']['SubnetId'],
+                'az': s['Subnet']['AvailabilityZone'],
+            } for s in subnets
+        ]
+    }
+
+    try:
+        for s in subnets:
+            ec2.delete_subnet(SubnetId=s['Subnet']['SubnetId'])
+        ec2.delete_vpc(VpcId=vpc_resp['Vpc']['VpcId'])
+    except botocore.exceptions.ClientError as e:
+        if 'not found' in e.message:
+            pass
+        else:
+            raise
+
 
 @pytest.fixture
 def placeboify(request, monkeypatch):
@@ -153,12 +214,18 @@ def test_create_with_nonexistent_launch_config(placeboify):
         asg_module.create_autoscaling_group(connection, module)
     excinfo.match('^Missing required arguments .* launch_config_name')
 
-def test_create_with_launch_config(placeboify, basic_launch_config):
+def test_create_with_launch_config(placeboify, basic_launch_config, scratch_vpc):
     connection = placeboify.client('autoscaling')
     module = FakeModule(name='test-asg-created',
-            launch_config_name=basic_launch_config,
-            min_size=0, max_size=0, desired_capacity=0,
-            availability_zones=[])
-    with pytest.raises(ExitJSON) as excinfo:
-        asg_module.create_autoscaling_group(connection, module)
-    assert excinfo.value.kwargs.changed is True
+        launch_config_name=basic_launch_config,
+        min_size=0, max_size=0, desired_capacity=0,
+        availability_zones=[s['az'] for s in scratch_vpc['subnets']],
+        vpc_zone_identifier=[s['id'] for s in scratch_vpc['subnets']],
+    )
+
+    changed, asg_properties = asg_module.create_autoscaling_group(connection, module)
+    assert changed is True
+    print(asg_properties)
+
+    changed = asg_module.delete_autoscaling_group(connection, module)
+    assert changed is True
