@@ -1992,6 +1992,9 @@ class AnsibleModule(object):
         assert 'msg' in kwargs, "implementation error -- msg to explain the error is required"
         kwargs['failed'] = True
 
+        if kwargs.get('gather_exc'):
+            kwargs['exception'] = traceback.format_exc()
+
         self.do_cleanup_files()
         self._return_formatted(kwargs)
         sys.exit(1)
