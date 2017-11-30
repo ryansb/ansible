@@ -1725,7 +1725,7 @@ def main():
 
         (changed, instance_dict_array, new_instance_ids) = startstop_instances(module, ec2, instance_ids, state, instance_tags)
 
-    elif state in ('restarted'):
+    elif state in ('restarted',):
         instance_ids = module.params.get('instance_ids')
         instance_tags = module.params.get('instance_tags')
         if not (isinstance(instance_ids, list) or isinstance(instance_tags, dict)):
