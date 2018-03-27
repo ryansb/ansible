@@ -170,11 +170,16 @@ public_ip:
 
 try:
     import boto.exception
+    import boto3, botocore
+    from botocore.exception import ClientError, BotocoreError
 except ImportError:
     pass  # Taken care of by ec2.HAS_BOTO
 
+import traceback
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.ec2 import HAS_BOTO, ec2_argument_spec, ec2_connect
+from ansible.module_utils.ec2 import HAS_BOTO3, camel_dict_to_snake_dict, ansible_dict_to_boto3_filter_list, AWSRetry
+from ansible.module_utils.ec2 import boto3_conn, get_aws_connection_info, ec2_argument_spec
 
 
 class EIPException(Exception):
@@ -229,19 +234,37 @@ def disassociate_ip_and_device(ec2, address, device_id, check_mode, isinstance=T
 
 def _find_address_by_ip(ec2, public_ip):
     try:
-        return ec2.get_all_addresses([public_ip])[0]
-    except boto.exception.EC2ResponseError as e:
-        if "Address '{}' not found.".format(public_ip) not in e.message:
+        return ec2.describe_addresses(
+            Filters=ansible_dict_to_boto3_filter_list({
+                'public-ip': public_ip
+            })
+        ).get('Addresses', [])[0]
+    except IndexError as e:
+        return
+    except ClientError as e:
+        if 'NotFound' not in e.response['Error']['Code']:
             raise
 
 
 def _find_address_by_device_id(ec2, device_id, isinstance=True):
-    if isinstance:
-        addresses = ec2.get_all_addresses(None, {'instance-id': device_id})
-    else:
-        addresses = ec2.get_all_addresses(None, {'network-interface-id': device_id})
-    if addresses:
-        return addresses[0]
+    try:
+        if isinstance:
+            return ec2.describe_addresses(
+                Filters=ansible_dict_to_boto3_filter_list({
+                    'instance-id': device_id
+                })
+            ).get('Addresses', [])[0]
+        else:
+            return ec2.describe_addresses(
+                Filters=ansible_dict_to_boto3_filter_list({
+                    'instance-id': device_id
+                })
+            ).get('Addresses', [])[0]
+    except IndexError:
+        return
+    except ClientError as e:
+        if 'NotFound' not in e.response['Error']['Code']:
+            raise
 
 
 def find_address(ec2, public_ip, device_id, isinstance=True):
@@ -395,7 +418,9 @@ def main():
     if not HAS_BOTO:
         module.fail_json(msg='boto required for this module')
 
-    ec2 = ec2_connect(module)
+    # ec2 = ec2_connect(module)
+    region, ec2_url, aws_connect_kwargs = get_aws_connection_info(module, boto3=True)
+    ec2 = boto3_conn(module, conn_type='client', resource='ec2', region=region, endpoint=ec2_url, **aws_connect_kwargs)
 
     device_id = module.params.get('device_id')
     instance_id = module.params.get('instance_id')
@@ -454,8 +479,10 @@ def main():
                 released = release_address(ec2, address, module.check_mode)
                 result = {'changed': released['changed'], 'disassociated': {'changed': False}, 'released': released}
 
-    except (boto.exception.EC2ResponseError, EIPException) as e:
-        module.fail_json(msg=str(e))
+    except (ClientError, BotoCoreError) as e:
+        module.fail_json(msg=str(e), exception=traceback.format_exc())
+    except EIPException as e:
+        module.fail_json(msg=str(e), exception=traceback.format_exc())
 
     if instance_id:
         result['warnings'] = warnings
