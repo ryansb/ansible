@@ -242,7 +242,7 @@ def create_or_update_private(module, client, matching_zones, record):
 
 
 def create_or_update_public(module, client, matching_zones, record):
-    zone_details = None
+    zone_details, zone_delegation_set_details = None, {}
     for matching_zone in matching_zones:
         try:
             zone_details = client.get_hosted_zone(Id=matching_zone['Id'])['HostedZone']
@@ -265,17 +265,21 @@ def create_or_update_public(module, client, matching_zones, record):
     if zone_details is None:
         if not module.check_mode:
             try:
-                result = client.create_hosted_zone(
+                params = dict(
                     Name=record['name'],
                     HostedZoneConfig={
                         'Comment': record['comment'] if record['comment'] is not None else "",
                         'PrivateZone': False,
                     },
                     CallerReference="%s-%s" % (record['name'], time.time()),
-                    DelegationSetId=record['delegation_set_id']
                 )
+
+                if record.get('delegation_set_id') is not None:
+                    params['DelegationSetId'] = record['delegation_set_id']
+
+                result = client.create_hosted_zone(**params)
                 zone_details = result['HostedZone']
-                zone_delegation_set_details = result['DelegationSet']
+                zone_delegation_set_details = result.get('DelegationSet', {})
             except (BotoCoreError, ClientError) as e:
                 module.fail_json_aws(e, msg="Could not create hosted zone")
         changed = True
@@ -283,7 +287,7 @@ def create_or_update_public(module, client, matching_zones, record):
     if not module.check_mode:
         record['zone_id'] = zone_details['Id'].replace('/hostedzone/', '')
         record['name'] = zone_details['Name']
-        record['delegation_set_id'] = zone_delegation_set_details['Id'].replace('/delegationset/', '')
+        record['delegation_set_id'] = zone_delegation_set_details.get('Id', '').replace('/delegationset/', '')
 
     return changed, record
 
