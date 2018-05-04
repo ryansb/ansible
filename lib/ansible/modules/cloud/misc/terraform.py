@@ -176,13 +176,13 @@ def build_plan(bin_path, project_path, variables_args, state_file, plan_path=Non
 
     if rc == 0:
         # no changes
-        return plan_path, False
+        return plan_path, False, out, err
     elif rc == 1:
         # failure to plan
         module.fail_json(msg='Terraform plan could not be created\r\nSTDOUT: {0}\r\n\r\nSTDERR: {1}'.format(out, err))
     elif rc == 2:
         # changes, but successful
-        return plan_path, True
+        return plan_path, True, out, err
 
     module.fail_json(msg='Terraform plan failed with unexpected exit code {0}. \r\nSTDOUT: {1}\r\n\r\nSTDERR: {2}'.format(rc, out, err))
 
@@ -255,7 +255,7 @@ def main():
     needs_application, changed = True, True
 
     if state == 'planned':
-        plan_file, needs_application = build_plan(command[0], project_path, variables_args, state_file, plan_file)
+        plan_file, needs_application, out, err = build_plan(command[0], project_path, variables_args, state_file, plan_file)
     if state == 'absent':
         # deleting cannot use a statefile
         needs_application = True
@@ -266,7 +266,7 @@ def main():
     elif plan_file and not os.path.exists(plan_file):
         module.fail_json(msg='Could not find plan_file "{0}", check the path and try again.'.format(plan_file))
     else:
-        plan_file, needs_application = build_plan(command[0], project_path, variables_args, state_file, plan_file)
+        plan_file, needs_application, out, err = build_plan(command[0], project_path, variables_args, state_file, plan_file)
         command.append(plan_file)
 
     if needs_application and not module.check_mode and not state == 'planned':
